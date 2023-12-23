@@ -1,79 +1,70 @@
-import boto3, requests, time, subprocess
+import boto3, subprocess, os, time
 
-def get_instance_id():
-    try:
-        response = requests.get('http://169.254.169.254/latest/meta-data/instance-id', timeout=2)
-        return response.text
-    except requests.exceptions.RequestException as e:
-        print(f"Error: Unable to fetch instance ID - {e}")
-        return None
-
-def wait_for_volume_completion(ec2_client, volume_id):
-    while True:
-        volume_status = ec2_client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['State']
-
-        if volume_status == 'completed':
-            break
-
-        time.sleep(10)
-
-def resize_volume(ec2_client, volume_id, new_size_gb):
-    ec2_client.modify_volume(VolumeId=volume_id, Size=new_size_gb)
-
-def main():
+def lambda_handler(event, context):
     # Setting adjustable parameters
     MULTIPLIER = 1.1
     THRESHOLD = 80
     AWS_REGION = "us-east-1"
+    TOKEN = subprocess.check_output(['curl', '-X', 'PUT', 'http://169.254.169.254/latest/api/token', '-H', 'X-aws-ec2-metadata-token-ttl-seconds: 21600']).decode('utf-8')
 
-    # Get the instance ID dynamically
-    instance_id = get_instance_id()
-    
-    if not instance_id:
-        print("Error: Unable to determine instance ID. Exiting.")
-        return
-    # No use of token as the script is running inside the instance itself...
-    # TOKEN = subprocess.check_output(['curl', '-X', 'PUT', 'http://169.254.169.254/latest/api/token', '-H', 'X-aws-ec2-metadata-token-ttl-seconds: 21600']).decode('utf-8')
+    # Check Disk Usage
+    current_usage = subprocess.check_output(['df', '-h', '/']).decode('utf-8').split('\n')[1].split()[4]
+    current_usage = int(current_usage[:-1]) # Remove the percent and conveting to int
 
-    # GET volumes
-    ec2 = boto3.resource('ec2', region_name=AWS_REGION)
-    instance = ec2.Instance(instance_id)
-    volumes = list(instance.volumes.all())
+    # Condition to expand disk
+    if current_usage > THRESHOLD:
+        print(f"Disk usage is above {THRESHOLD}%, Expanding disk....")
 
-    if not volumes:
-        print("No volumes attached to the instance.")
-        return
+        #GET instance ID
+        instance_id = subprocess.check_output(['curl', '-H', f'X-aws-ec2-metadata-token: {TOKEN}', '-s', 'http://169.254.169.254/latest/meta-data/instance-id/']).strip()
 
-    # Loop through all volumes
-    for volume in volumes:
-        volume_id = volume.id
+        # GET volume ID
+        ec2 = boto3.resource('ec2', region_name=AWS_REGION)
+        instance = ec2.Instance(instance_id)
+        volumes = list(instance.volumes.all())
+
+        if not volumes:
+            print("No volumes attached to the instance.")
+            return
+        
+        volume_id = volumes[0].id
+
+        def wait_for_volume_completion(ec2_client, volume_id):
+            while True:
+                volume_status = ec2_client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['State']
+
+                if volume_status == 'completed':
+                    break
+
+            time.sleep(10)  # Adjust the sleep duration based on your preference
 
         # AWS CLI command for getting the current volume size
         ec2_client = boto3.client('ec2', region_name=AWS_REGION)
-        current_size = ec2_client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['Size']
+        current_size = ec2_client.describe_volumes(Volume_Ids=[volume_id])[0]['Size']
 
-        # Check Disk Usage for the current volume
-        current_usage = subprocess.check_output(['df', '-h', f'/dev/{volume.attachments[0]["Device"]}', '--output=pcent']).decode('utf-8').strip()
-        current_usage = int(current_usage[:-1])  # Remove the percent and convert to int
+        # Calculate the new size
+        new_size = int(current_size * MULTIPLIER)
 
-        # Condition to expand disk
-        if current_usage > THRESHOLD:
-            print(f"Disk usage for volume {volume_id} is above {THRESHOLD}%, expanding disk...")
+        # AWS CLI command for resizing the EBS volume
+        ec2_client.modify_volume(VolumeId=volume_id, Size=new_size)
 
-            # Calculate the new size
-            new_size = int(current_size * MULTIPLIER)
+        # Wait for volume modification to complete
+        wait_for_volume_completion(ec2_client, volume_id)
 
-            # AWS CLI command for resizing the EBS volume
-            resize_volume(ec2_client, volume_id, new_size)
+        # Getting Disk name and Filesystem Type
+        disk_name = subprocess.check_output(['lsblk', '--output', 'NAME,FSTYPE', '--noheadings']).decode('utf-8').split()[1]
+        try:
+            fs_type = subprocess.check_output(['lsblk', '-o', 'FSTYPE', f"/dev/{disk_name}", '--noheadings']).decode('utf-8').strip()
+        except subprocess.CalledProcessError as e:
+            print(f"Error: {e}")
+            fs_type = None
 
-            # Wait for volume modification to complete
-            wait_for_volume_completion(ec2_client, volume_id)
+        # Resizing the partition & filesystem based on the fstype
+        if fs_type == 'xfs':
+            subprocess.run(['sudo', 'growpart', f'/dev/{disk_name}', '1'])
+            subprocess.run(['sudo', 'xfs_growfs', '-d', '/'])
+        elif fs_type == 'ext4':
+            subprocess.run(['sudo', 'growpart', f'/dev/{disk_name}', '1'])
+            subprocess.run(['sudo', 'resize2fs', f'/dev/{disk_name}1'])
 
-            print(f"Disk expansion for volume {volume_id} complete.")
-        else:
-            print(f"Disk usage for volume {volume_id} is below {THRESHOLD}%, no need to expand the disk.")
-
-    print("All disk expansions complete.")
-
-if __name__ == "__main__":
-    main()
+        print("Disk expansion complete.")
