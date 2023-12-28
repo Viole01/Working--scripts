@@ -2,7 +2,7 @@
 import boto3
 
 # Open AWS management console
-aws_management_console = boto3.session.Session(profile_name="default")
+aws_management_console = boto3.session.Session(profile_name="boto3")
 
 # Open EC2 Console
 ec2_console = aws_management_console.client(service_name="ec2", region_name="us-east-1")
