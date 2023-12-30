@@ -23,14 +23,17 @@ def create_ebs_snapshot():
 def delete_ebs_snapshot():
     retention_date = datetime.now() - timedelta(days=retention_period)
 
+    # LIst all snapshots for the volume
     snapshots = ec2.describe_snapshots(Filters=[{
         'Name': 'volume-id',
         'Values': [volume_id]
     }])['Snapshots']
 
+    # Comparing all snapshots according to the creation date
     for snapshot in snapshots:
         snapshot_id = snapshot['SnapshotId']
         snapshot_date = snapshot['StartTime'].replace(tzinfo=None)
+        # Deleting Old snapshots
         if snapshot_date < retention_date:
             print(f"Deleting snapshot {snapshot_id}")
             ec2.delete_snapshot(SnapshotId=snapshot_id)
