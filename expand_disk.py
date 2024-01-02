@@ -1,22 +1,35 @@
 import boto3, requests, time, subprocess
 
+import requests
+
 def get_metadata_token():
     try:
         response = requests.put('http://169.254.169.254/latest/api/token', headers={'X-aws-ec2-metadata-token-ttl-seconds': '60'}, timeout=2)
         response.raise_for_status()
-        return response.text
+        token = response.text
+        # print(f"Metadata Token: {token}")
+        return token
     except requests.exceptions.RequestException as e:
         print(f"Error: Unable to fetch metadata token - {e}")
         return None
 
 def get_instance_id():
     TOKEN = get_metadata_token()
+    
+    if not TOKEN:
+        print("Error: Unable to obtain metadata token. Exiting.")
+        return None
+
     try:
         response = requests.get('http://169.254.169.254/latest/meta-data/instance-id', headers={'X-aws-ec2-metadata-token': TOKEN}, timeout=2)
-        return response.text
+        response.raise_for_status()  # Check for errors in the response
+        instance_id = response.text
+        # print(f"Instance ID: {instance_id}")
+        return instance_id
     except requests.exceptions.RequestException as e:
         print(f"Error: Unable to fetch instance ID - {e}")
         return None
+
 
 def wait_for_volume_completion(ec2_client, volume_id):
     while True:
