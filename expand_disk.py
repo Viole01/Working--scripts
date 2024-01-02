@@ -41,6 +41,14 @@ def wait_for_volume_completion(ec2_client, volume_id):
 def resize_volume(ec2_client, volume_id, new_size_gb):
     ec2_client.modify_volume(VolumeId=volume_id, Size=new_size_gb)
 
+def get_local_device_name(aws_device_name):
+    if aws_device_name.startswith('/dev/sd'):
+        return '/dev/xvd' + aws_device_name[7:]
+    elif aws_device_name.startswith('/dev/nvme'):
+        return '/dev/nvme' + aws_device_name[9:]
+    else:
+        return aws_device_name
+
 def main():
     # Setting adjustable parameters
     MULTIPLIER = 1.1
@@ -74,9 +82,15 @@ def main():
         current_size = ec2_client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['Size']
         print(f"Current volume size for volume {volume_id}: {current_size} GB")
 
+        # Get local disk name based on disk name
+        aws_device_name = volume.attachments[0]["Device"]
+        local_device_name = get_local_device_name(aws_device_name)
+
         # Check Disk Usage for the current volume
-        current_usage = subprocess.check_output(['df', '-h', f'{volume.attachments[0]["Device"]}', '--output=pcent']).decode('utf-8').strip()
-        current_usage = int(current_usage[:-1])  # Remove the percent and convert to int
+        current_usage_output = subprocess.check_output(['df', '-h', local_device_name, '--output=pcent']).decode('utf-8').strip()
+        # Extracting the actual value from the object
+        current_usage = int(current_usage_output.split('\n')[1].strip())
+        # Remove the percent and convert to int
         print(f"Current disk usage for volume {volume_id}: {current_usage}%")
 
         # Condition to expand disk
