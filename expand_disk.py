@@ -1,8 +1,18 @@
 import boto3, requests, time, subprocess
 
-def get_instance_id():
+def get_metadata_token():
     try:
-        response = requests.get('http://169.254.169.254/latest/meta-data/instance-id', timeout=2)
+        response = requests.put('http://169.254.169.254/latest/api/token', headers={'X-aws-ec2-metadata-token-ttl-seconds': '60'}, timeout=2)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        print(f"Error: Unable to fetch metadata token - {e}")
+        return None
+
+def get_instance_id():
+    TOKEN = get_metadata_token()
+    try:
+        response = requests.get('http://169.254.169.254/latest/meta-data/instance-id', headers={'X-aws-ec2-metadata-token': TOKEN}, timeout=2)
         return response.text
     except requests.exceptions.RequestException as e:
         print(f"Error: Unable to fetch instance ID - {e}")
@@ -32,8 +42,6 @@ def main():
     if not instance_id:
         print("Error: Unable to determine instance ID. Exiting.")
         return
-    # No use of token as the script is running inside the instance itself...
-    # TOKEN = subprocess.check_output(['curl', '-X', 'PUT', 'http://169.254.169.254/latest/api/token', '-H', 'X-aws-ec2-metadata-token-ttl-seconds: 21600']).decode('utf-8')
 
     # GET volumes
     ec2 = boto3.resource('ec2', region_name=AWS_REGION)
