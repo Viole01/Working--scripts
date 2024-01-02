@@ -1,7 +1,5 @@
 import boto3, requests, time, subprocess
 
-import requests
-
 def get_metadata_token():
     try:
         response = requests.put('http://169.254.169.254/latest/api/token', headers={'X-aws-ec2-metadata-token-ttl-seconds': '60'}, timeout=2)
@@ -30,12 +28,12 @@ def get_instance_id():
         print(f"Error: Unable to fetch instance ID - {e}")
         return None
 
-
 def wait_for_volume_completion(ec2_client, volume_id):
     while True:
-        volume_status = ec2_client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['State']
+        volume_status = ec2_client.describe_volumes_modifications(VolumeIds=[volume_id])
+        modification_state = volume_status['VolumesModifications'][0]['ModificationState']
 
-        if volume_status == 'completed':
+        if modification_state == 'completed':
             break
 
         time.sleep(10)
@@ -51,7 +49,8 @@ def main():
 
     # Get the instance ID dynamically
     instance_id = get_instance_id()
-    
+    print(f"Instance ID: {instance_id}")
+
     if not instance_id:
         print("Error: Unable to determine instance ID. Exiting.")
         return
@@ -60,6 +59,7 @@ def main():
     ec2 = boto3.resource('ec2', region_name=AWS_REGION)
     instance = ec2.Instance(instance_id)
     volumes = list(instance.volumes.all())
+    print(f"Volumes attached to instance: {[volume.id for volume in volumes]}")
 
     if not volumes:
         print("No volumes attached to the instance.")
@@ -72,10 +72,12 @@ def main():
         # AWS CLI command for getting the current volume size
         ec2_client = boto3.client('ec2', region_name=AWS_REGION)
         current_size = ec2_client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['Size']
+        print(f"Current volume size for volume {volume_id}: {current_size} GB")
 
         # Check Disk Usage for the current volume
-        current_usage = subprocess.check_output(['df', '-h', f'/dev/{volume.attachments[0]["Device"]}', '--output=pcent']).decode('utf-8').strip()
+        current_usage = subprocess.check_output(['df', '-h', f'{volume.attachments[0]["Device"]}', '--output=pcent']).decode('utf-8').strip()
         current_usage = int(current_usage[:-1])  # Remove the percent and convert to int
+        print(f"Current disk usage for volume {volume_id}: {current_usage}%")
 
         # Condition to expand disk
         if current_usage > THRESHOLD:
