@@ -85,11 +85,14 @@ def main():
         # Get local disk name based on disk name
         aws_device_name = volume.attachments[0]["Device"]
         local_device_name = get_local_device_name(aws_device_name)
+        print(f"Local device name for volume {volume_id}: {local_device_name}")
 
         # Check Disk Usage for the current volume
         current_usage_output = subprocess.check_output(['df', '-h', local_device_name, '--output=pcent']).decode('utf-8').strip()
         # Extracting the actual value from the object
-        current_usage = int(current_usage_output.split('\n')[1].strip())
+        current_usage_percentage = current_usage_output.split('\n')[1].strip()
+        # Remove the percentage sign and convert to int
+        current_usage = int(current_usage_percentage.rstrip('%'))
         # Remove the percent and convert to int
         print(f"Current disk usage for volume {volume_id}: {current_usage}%")
 
